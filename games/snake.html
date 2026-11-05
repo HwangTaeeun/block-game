@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>자동 스네이크</title><link rel="stylesheet" href="../common.css"></head>
+<body>
+<canvas id="c"></canvas>
+<div class="note">가만히 보기만 하세요. 이 뱀은 절대 안 죽습니다.  🍎 <span id="score">0</span> · 🏆 <span id="best">0</span> · 클리어 <span id="loops">0</span></div>
+<script src="../common.js"></script>
+<script>
+const bar = mountBar('자동 스네이크');
+const W = 20, H = 16, S = 32;  // H는 짝수 (해밀턴 사이클 조건)
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+cv.width = W * S; cv.height = H * S;
+
+// 모든 칸을 한 번씩 지나 제자리로 돌아오는 해밀턴 사이클 -> 사이클 순서를 지키면 절대 안 죽음
+const cycle = [];
+for (let x = 0; x < W; x++) cycle.push([x, 0]);
+for (let y = 1; y < H; y++) {
+  if (y % 2 === 1) for (let x = W - 1; x >= 1; x--) cycle.push([x, y]);
+  else for (let x = 1; x < W; x++) cycle.push([x, y]);
+}
+for (let y = H - 1; y >= 1; y--) cycle.push([0, y]);
+const N = cycle.length;
+const pos = {}; cycle.forEach((p, i) => pos[p[0] + ',' + p[1]] = i);
+const P = p => pos[p[0] + ',' + p[1]];
+
+let snake, apple, score, best = 0, loops = 0, dir = [1, 0];
+function reset() { dir = [1, 0]; snake = [cycle[2], cycle[1], cycle[0]]; score = 0; placeApple(); }
+function placeApple() {
+  const occ = new Set(snake.map(p => p[0] + ',' + p[1]));
+  const free = cycle.filter(p => !occ.has(p[0] + ',' + p[1]));
+  if (!free.length) { loops++; reset(); return; }
+  apple = free[Math.floor(Math.random() * free.length)];
+}
+// 사람처럼: 사과 쪽 지름길 + 변덕. 단, 사이클 순서를 지키는 안전한 칸만 고름
+function chooseNext() {
+  const head = snake[0], tail = snake[snake.length - 1], hp = P(head);
+  const dist = c => (P(c) - hp + N) % N;
+  const t = dist(tail), a = dist(apple), canShortcut = snake.length < N * 0.55;
+  const cands = [];
+  for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+    const n = [head[0] + dx, head[1] + dy];
+    if (n[0] < 0 || n[1] < 0 || n[0] >= W || n[1] >= H) continue;
+    const d = dist(n);
+    if (d === 1) cands.push({ n, dx, dy, d });
+    else if (canShortcut && d > 1 && d <= a && d < t - 2) cands.push({ n, dx, dy, d });
+  }
+  let best = null, bs = 1e9;
+  for (const c of cands) {
+    let s = Math.abs(c.n[0] - apple[0]) + Math.abs(c.n[1] - apple[1]) + Math.random() * 2.2;
+    if (c.dx === dir[0] && c.dy === dir[1]) s -= 0.8;
+    if (c.dx === -dir[0] && c.dy === -dir[1]) s += 5;
+    if (s < bs) { bs = s; best = c; }
+  }
+  if (best.dx !== dir[0] || best.dy !== dir[1]) Snd.click();
+  dir = [best.dx, best.dy];
+  return best.n;
+}
+function step() {
+  const head = chooseNext();
+  snake.unshift(head);
+  if (head[0] === apple[0] && head[1] === apple[1]) { score++; best = Math.max(best, score); Snd.tone(660, 0.1, 'triangle', 0.1, 990); placeApple(); }
+  else snake.pop();
+  document.getElementById('score').textContent = score;
+  document.getElementById('best').textContent = best;
+  document.getElementById('loops').textContent = loops;
+}
+function draw() {
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { ctx.fillStyle = (x + y) % 2 ? '#a7d948' : '#aad751'; ctx.fillRect(x * S, y * S, S, S); }
+  ctx.font = S * 0.8 + 'px serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
+  ctx.fillText('🍎', apple[0] * S + S / 2, apple[1] * S + S / 2 + 2);
+  ctx.lineCap = ctx.lineJoin = 'round'; ctx.strokeStyle = '#4674e9'; ctx.lineWidth = S * 0.7;
+  ctx.beginPath();
+  snake.forEach((p, i) => { const px = p[0] * S + S / 2, py = p[1] * S + S / 2; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+  ctx.stroke();
+  const h = snake[0];
+  for (const [col, r] of [['#fff', 4.5], ['#111', 2]]) { ctx.fillStyle = col; [-1, 1].forEach(d => { ctx.beginPath(); ctx.arc(h[0] * S + S / 2 + d * 6, h[1] * S + S / 2 - 3, r, 0, 7); ctx.fill(); }); }
+}
+reset();
+loop(step, draw, () => 12 * bar.mult());
+</script></body></html>

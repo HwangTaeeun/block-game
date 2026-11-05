@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>자동 블록쌓기</title><link rel="stylesheet" href="../common.css"></head>
+<body>
+<canvas id="c"></canvas>
+<div class="note">AI가 모든 위치를 계산해서 줄을 지웁니다. 가끔 망설이는 건 사람 흉내예요.</div>
+<script src="../common.js"></script>
+<script>
+const bar = mountBar('자동 블록쌓기');
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const C = 10, Rw = 20, S = 24; cv.width = C * S + 120; cv.height = Rw * S;
+const SH = { I: [[1,1,1,1]], O: [[1,1],[1,1]], T: [[0,1,0],[1,1,1]], S: [[0,1,1],[1,1,0]], Z: [[1,1,0],[0,1,1]], J: [[1,0,0],[1,1,1]], L: [[0,0,1],[1,1,1]] };
+const COL = { I: '#4cc9f0', O: '#f9c74f', T: '#b388eb', S: '#90be6d', Z: '#f94144', J: '#4361ee', L: '#f8961e' };
+const KEYS = Object.keys(SH);
+const rot = m => m[0].map((_, i) => m.map(r => r[i]).reverse());
+
+let board, cur, nextK, tgt, score = 0, lines = 0, resets = 0, tick = 0;
+const emptyBoard = () => Array.from({ length: Rw }, () => Array(C).fill(null));
+const fitsOn = (b, m, x, y) => m.every((row, r) => row.every((v, c) => {
+  if (!v) return true; const bx = x + c, by = y + r;
+  return bx >= 0 && bx < C && by < Rw && (by < 0 || !b[by][bx]);
+}));
+const fits = (m, x, y) => fitsOn(board, m, x, y);
+
+function evaluate(b) {   // 고전 휴리스틱: 줄 완성 ↑, 높이/구멍/울퉁불퉁 ↓
+  let full = 0, holes = 0, agg = 0, bump = 0, prev = null;
+  for (let r = 0; r < Rw; r++) if (b[r].every(v => v)) full++;
+  for (let c = 0; c < C; c++) {
+    let h = 0, seen = false;
+    for (let r = 0; r < Rw; r++) { if (b[r][c]) { if (!seen) { h = Rw - r; seen = true; } } else if (seen) holes++; }
+    agg += h; if (prev !== null) bump += Math.abs(h - prev); prev = h;
+  }
+  return -0.51 * agg + 0.76 * full - 0.36 * holes - 0.18 * bump;
+}
+function plan(k) {
+  let m = SH[k], best = { s: -1e9, rot: 0, x: 3 };
+  for (let rr = 0; rr < 4; rr++, m = rot(m)) {
+    for (let x = -1; x <= C - m[0].length + 1; x++) {
+      if (!fits(m, x, 0)) continue;
+      let y = 0; while (fits(m, x, y + 1)) y++;
+      const b = board.map(r => r.slice());
+      m.forEach((row, r) => row.forEach((v, c) => { if (v && y + r >= 0) b[y + r][x + c] = 1; }));
+      const s = evaluate(b) + Math.random() * 0.15;
+      if (s > best.s) best = { s, rot: rr, x };
+    }
+  }
+  return best;
+}
+function spawn() {
+  const k = nextK || KEYS[Math.floor(Math.random() * 7)];
+  nextK = KEYS[Math.floor(Math.random() * 7)];
+  cur = { k, m: SH[k], x: 3, y: 0, rots: 0 };
+  if (!fits(cur.m, cur.x, cur.y)) { board = emptyBoard(); resets++; Snd.tone(300, 0.5, 'sawtooth', 0.1, 60); }
+  tgt = plan(cur.k);
+}
+function lock() {
+  cur.m.forEach((row, r) => row.forEach((v, c) => { if (v) board[cur.y + r][cur.x + c] = COL[cur.k]; }));
+  Snd.tone(110, 0.08, 'sine', 0.2, 60);
+  let n = 0;
+  for (let r = Rw - 1; r >= 0; r--) if (board[r].every(v => v)) { board.splice(r, 1); board.unshift(Array(C).fill(null)); n++; r++; }
+  if (n) { lines += n; score += [0, 100, 300, 500, 800][n]; [523, 659, 784, 1046].slice(0, n + 1).forEach((f, i) => setTimeout(() => Snd.tone(f, 0.12, 'triangle', 0.1), i * 70)); }
+  spawn();
+}
+function step() {
+  tick++;
+  if (tick % 5 === 0 && fits(cur.m, cur.x, cur.y + 1)) cur.y++;          // 중력
+  if (Math.random() < 0.12) return;                                         // 망설임
+  if (cur.rots < tgt.rot) {
+    const m2 = rot(cur.m);
+    if (fits(m2, cur.x, cur.y)) { cur.m = m2; Snd.click(); }
+    cur.rots++;
+  } else if (cur.x !== tgt.x) {
+    const nx = cur.x + Math.sign(tgt.x - cur.x);
+    if (fits(cur.m, nx, cur.y)) { cur.x = nx; Snd.click(); } else tgt.x = cur.x;
+    if (Math.random() < 0.05) { const f = cur.x + (Math.random() < 0.5 ? -1 : 1); if (fits(cur.m, f, cur.y)) { cur.x = f; Snd.click(); } }  // 괜히 한 번 더 누름
+  } else {
+    for (let i = 0; i < 2; i++) { if (fits(cur.m, cur.x, cur.y + 1)) cur.y++; else { lock(); return; } }
+  }
+}
+function cell(x, y, col) { ctx.fillStyle = col; ctx.fillRect(x * S + 1, y * S + 1, S - 2, S - 2); ctx.fillStyle = '#fff3'; ctx.fillRect(x * S + 1, y * S + 1, S - 2, 5); }
+function draw() {
+  ctx.fillStyle = '#0d1117'; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.strokeStyle = '#ffffff10'; for (let x = 0; x <= C; x++) { ctx.beginPath(); ctx.moveTo(x * S, 0); ctx.lineTo(x * S, Rw * S); ctx.stroke(); }
+  for (let r = 0; r < Rw; r++) for (let c = 0; c < C; c++) if (board[r][c]) cell(c, r, board[r][c]);
+  cur.m.forEach((row, r) => row.forEach((v, c) => { if (v) cell(cur.x + c, cur.y + r, COL[cur.k]); }));
+  ctx.fillStyle = '#ffffffcc'; ctx.font = '13px system-ui'; ctx.textAlign = 'left';
+  ctx.fillText('NEXT', C * S + 16, 24);
+  SH[nextK].forEach((row, r) => row.forEach((v, c) => { if (v) { ctx.fillStyle = COL[nextK]; ctx.fillRect(C * S + 16 + c * 18, 36 + r * 18, 16, 16); } }));
+  ctx.fillStyle = '#ffffffcc';
+  ctx.fillText('SCORE', C * S + 16, 130); ctx.fillText(score, C * S + 16, 150);
+  ctx.fillText('LINES', C * S + 16, 184); ctx.fillText(lines, C * S + 16, 204);
+  ctx.fillText('RESET', C * S + 16, 238); ctx.fillText(resets, C * S + 16, 258);
+}
+board = emptyBoard(); spawn();
+loop(step, draw, () => 28 * bar.mult());
+</script></body></html>

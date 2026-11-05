@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>멍때리기 게임 포털</title>
+<link rel="stylesheet" href="common.css">
+<style>
+  header{text-align:center;padding:36px 16px 8px}
+  h1{margin:0;font-size:32px}
+  header p{opacity:.75;margin:8px 0 0}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px;width:100%;max-width:1000px;padding:24px 16px 40px}
+  .card{display:block;text-decoration:none;color:var(--text);background:var(--panel);border-radius:14px;overflow:hidden;transition:transform .15s,box-shadow .15s;box-shadow:0 4px 14px #0006}
+  .card:hover{transform:translateY(-4px);box-shadow:0 10px 24px #0008}
+  .thumb{height:120px;display:flex;align-items:center;justify-content:center;font-size:56px}
+  .info{padding:12px 14px 16px}
+  .info b{font-size:17px}
+  .info span{display:block;font-size:13px;opacity:.75;margin-top:4px;line-height:1.4}
+  .tag{display:inline-block;margin-top:8px;font-size:11px;background:#0e1f16;color:var(--accent);padding:2px 8px;border-radius:99px}
+  footer{opacity:.55;font-size:12px;padding:0 16px 30px;text-align:center}
+</style></head>
+<body>
+<header>
+  <h1>🎮 멍때리기 게임 포털</h1>
+  <p>조작은 필요 없어요. 켜 놓고 구경만 하세요. 전부 알아서 플레이합니다.</p>
+</header>
+<main class="grid" id="grid"></main>
+<footer>모든 그래픽과 효과음은 코드로 직접 만들었습니다. 외부 이미지·소리·상표 없음.</footer>
+<script>
+const games = [
+  ['snake',   '🐍', '자동 스네이크', '절대 안 죽는 뱀. 사람처럼 요리조리 지름길로 다니고, 꺾을 때마다 키 소리가 나요.', 'linear-gradient(135deg,#a7d948,#4674e9)', '안 죽음'],
+  ['breakout','🧱', '자동 벽돌깨기', '패들이 알아서 공을 받아칩니다. 다 깨면 다음 레벨.', 'linear-gradient(135deg,#ef476f,#9b5de5)', '무한 레벨'],
+  ['pong',    '🏓', '자동 퐁', '두 AI의 끝없는 랠리. 길어질수록 빨라져요.', 'linear-gradient(135deg,#1c2b5a,#0b1020)', 'AI 대결'],
+  ['tetris',  '🧩', '자동 블록쌓기', '모든 위치를 계산해 줄을 지우는 AI. 가끔 망설입니다.', 'linear-gradient(135deg,#4361ee,#4cc9f0)', '알고리즘'],
+  ['flappy',  '🐤', '자동 날개새', '파이프 사이를 사뿐히. 부딪히는 일은 없어요.', 'linear-gradient(135deg,#4ec0ca,#bfe9ee)', '안 죽음'],
+  ['worms',   '🪱', '지렁이 대결', '4마리가 사과를 두고 경쟁. 가끔 막혀 쓰러지고 다시 태어납니다.', 'linear-gradient(135deg,#ffd166,#a06cd5)', '경쟁'],
+  ['life',    '🦠', '생명 게임', '규칙 3줄로 스스로 진화하는 세포들. 멈추면 새 생명 투입.', 'linear-gradient(135deg,#050a14,#0fb59a)', '구경용']
+];
+document.getElementById('grid').innerHTML = games.map(([id, emoji, name, desc, bg, tag]) =>
+  `<a class="card" href="games/${id}.html"><div class="thumb" style="background:${bg}">${emoji}</div><div class="info"><b>${name}</b><span>${desc}</span><i class="tag">${tag}</i></div></a>`).join('');
+</script>
+</body></html>

@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Breakout</title><link rel="stylesheet" href="../common.css"></head>
+<body>
+<canvas id="c"></canvas>
+<div class="note" id="note"></div>
+<script src="../common.js"></script>
+<script src="breakout_levels.js"></script>
+<script>
+const bar = mountBar('Breakout', false, true);
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const W = 480, H = 360; cv.width = W; cv.height = H;
+const COLS = 10, ROWS = 8, BW = 44, BH = 16, BX = (W - COLS * BW) / 2, BY = 44, R = 5;
+const ROWCOL = BO_ROWCOL;
+
+let paused = null, idle = 0, manual = false, lives = 3, bricks, ball, pad = { x: W / 2, w: 72, y: H - 22 }, off = 0, level = 1, score = 0, t = 0;
+let banner = 0, bannerText = '', mouseX = null, won = 0;
+const startLevel = Math.max(1, Math.min(BO_MAX_LEVEL, parseInt(new URLSearchParams(location.search).get('level')) || 1));
+const keys = {};
+
+function padWidth() { return 72 - 28 * (level - 1) / (BO_MAX_LEVEL - 1); }   // paddle shrinks 72 -> 44
+function makeBricks() {
+  const rows = boLevel(level); bricks = []; pad.w = padWidth();
+  rows.forEach((line, r) => [...line].forEach((ch, c) => {
+    if (ch === '.') return;
+    const x = BX + c * BW, y = BY + r * (BH + 2);
+    // 공이 이미 벽돌 영역에 있으면 그 자리는 비워둠 (레벨업해도 공/패들 움직임은 그대로 유지)
+    if (ball && Math.abs(ball.x - (x + BW / 2)) < BW / 2 + R + 6 && Math.abs(ball.y - (y + BH / 2)) < BH / 2 + R + 6) return;
+    bricks.push({ x, y, r, power: false, speed: false, num: /[1-9]/.test(ch) ? +ch : 0 });
+  }));
+  const n = Math.min(Math.floor(rnd(6, 9)), Math.floor(bricks.length / 4));   // POWER 벽돌
+  for (let i = 0; i < n; i++) { const cand = bricks.filter(b => !b.power && !b.speed && !b.num); if (cand.length) cand[Math.floor(Math.random() * cand.length)].power = true; }
+  const ns = Math.min(Math.floor(rnd(3, 5)), Math.floor(bricks.length / 8));   // SPEED 벽돌
+  for (let i = 0; i < ns; i++) { const cand = bricks.filter(b => !b.power && !b.speed && !b.num); if (cand.length) cand[Math.floor(Math.random() * cand.length)].speed = true; }
+}
+const speedNow = () => 3.8 + 1.07 * (level - 1) / (BO_MAX_LEVEL - 1);   // 3.8 -> ~4.9 (creeps up a tiny bit each level)
+function serve() {
+  ball = { x: pad.x, y: pad.y - R - 1, vx: 0, vy: 0, power: false, fast: false, stuck: manual };   // 수동: 패들에 붙어서 대기
+  if (!manual) launch();
+  off = rnd(-0.7, 0.7) * pad.w / 2;
+}
+function launch() {
+  const a = rnd(-0.5, 0.5);
+  ball.vx = Math.sin(a) * speedNow(); ball.vy = -Math.cos(a) * speedNow(); ball.stuck = false;
+  Snd.tone(500, 0.08, 'triangle', 0.1, 800);
+}
+function getPower() { ball.power = true; banner = 60; bannerText = 'POWER!'; Snd.tone(300, 0.35, 'sawtooth', 0.1, 1200); }
+function getSpeed() {   // 갑자기 1.3배 빨라짐 (패들에 닿으면 원래 속도로)
+  if (!ball.fast) { ball.vx *= 1.3; ball.vy *= 1.3; ball.fast = true; }
+  banner = 60; bannerText = 'SPEED x1.3!'; Snd.tone(500, 0.25, 'square', 0.09, 1600);
+}
+function lowestNum() { let m = 99; for (const q of bricks) if (q.num && q.num < m) m = q.num; return m; }
+function hitBrick(axis) {
+  for (let i = bricks.length - 1; i >= 0; i--) {
+    const b = bricks[i];
+    if (ball.x + R > b.x && ball.x - R < b.x + BW - 2 && ball.y + R > b.y && ball.y - R < b.y + BH) {
+      const wasPower = ball.power;
+      if (b.num && b.num > lowestNum()) {   // ordered brick that isn't its turn yet: indestructible, just bounce
+        Snd.tone(120, 0.06, 'square', 0.07);
+        if (axis === 'x') ball.vx *= -1; else ball.vy *= -1;
+        const sp = Math.hypot(ball.vx, ball.vy), an = Math.atan2(ball.vy, ball.vx) + rnd(-0.12, 0.12);   // slight scatter so the ball can't loop forever
+        ball.vx = Math.cos(an) * sp; ball.vy = Math.sin(an) * sp;
+        return;
+      }
+      bricks.splice(i, 1); score += 10 * level; idle = 0;
+      if (b.power) getPower();
+      if (b.speed) getSpeed();
+      Snd.tone(300 + (ROWS - b.r) * 70, 0.07, 'square', 0.08);
+      if (wasPower) continue;                      // 파워공: 튕기지 않고 닿는 벽돌을 전부 부숨
+      if (axis === 'x') ball.vx *= -1; else ball.vy *= -1;
+      return;
+    }
+  }
+}
+function gameOver() {
+  banner = 120; bannerText = 'GAME OVER'; level = 1; score = 0; lives = 3; makeBricks();
+}
+// ---- Human-like auto paddle ----
+// Reacts a few frames late, predicts the landing spot only roughly, aims at a brick on purpose,
+// and moves with acceleration (so it overshoots / corrects a little) instead of snapping to the ball.
+const ai = { tx: W / 2, think: 0, pv: 0, desc: 0, aim: null, wander: 0 };
+function pickAim() {
+  const low = lowestNum(), turn = bricks.filter(b => b.num && b.num === low);
+  const pool = (turn.length && Math.random() < 0.7) ? turn : bricks.filter(b => !b.num || b.num === low);
+  return pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
+}
+function landingX() {   // where the ball will cross the paddle line (walls only; humans ignore bricks)
+  const tt = (pad.y - R - ball.y) / ball.vy, span = W - 2 * R;
+  let px = (ball.x + ball.vx * tt - R) % (2 * span); if (px < 0) px += 2 * span; if (px > span) px = 2 * span - px;
+  return px + R;
+}
+function humanPaddle() {
+  ai.desc = ball.vy > 0 ? ai.desc + 1 : 0;
+  // A person stays put while the ball is up among the bricks, and only starts moving once it has fallen below them.
+  let bottom = 0; for (const q of bricks) bottom = Math.max(bottom, q.y + BH);
+  const lowerZone = ball.y > Math.min(bottom - 10, 190);
+  if (--ai.think <= 0) {
+    ai.think = 4 + Math.floor(rnd(0, 4));                                   // re-evaluate every ~4-8 frames
+    if (ball.vy > 0 && ai.desc > 6 && lowerZone) {                          // ball coming down below the bricks: react (with delay)
+      if (!ai.aim || !bricks.includes(ai.aim)) ai.aim = pickAim();
+      const px = landingX() + rnd(-6, 6);                                   // imperfect estimate
+      let hit = 0;
+      if (ai.aim) hit = clamp(Math.atan2(ai.aim.x + BW / 2 - px, pad.y - ai.aim.y), -0.85, 0.85) + rnd(-0.12, 0.12);
+      hit = clamp(hit, -0.9, 0.9);                                          // never fully off the edge
+      ai.tx = px - hit * pad.w / 2;
+    } else if (ball.vy <= 0) {
+      ai.aim = null;
+      ai.tx = pad.x;                                                        // hold still; only a rare tiny re-centering nudge
+      if (Math.random() < 0.04) ai.tx = pad.x + rnd(-14, 14);
+    }
+  }
+  const want = clamp((ai.tx - pad.x) * 0.22, -11, 11);
+  ai.pv += clamp(want - ai.pv, -1.3, 1.3);                                  // acceleration limit = natural-looking motion
+  if (Math.abs(ai.tx - pad.x) < 1.5 && Math.abs(ai.pv) < 0.8) ai.pv = 0;    // settle fully (no endless jitter)
+  const nx = pad.x + ai.pv;
+  pad.x = clamp(nx, pad.w / 2, W - pad.w / 2);
+  if (pad.x !== nx) ai.pv = 0;
+}
+function step() {
+  if (paused) return;
+  t++;
+  if (won > 0) { if (--won === 0) { level = 1; score = 0; lives = 3; makeBricks(); serve(); } return; }
+  if (manual) {
+    // 목표 위치를 화면 안으로 제한 (안 그러면 벽 밖으로 계속 쌓여서 반대 키가 늦게 먹음)
+    if (keys.ArrowLeft) mouseX = clamp((mouseX ?? pad.x) - 9, pad.w / 2, W - pad.w / 2);
+    if (keys.ArrowRight) mouseX = clamp((mouseX ?? pad.x) + 9, pad.w / 2, W - pad.w / 2);
+    if (mouseX !== null) pad.x = clamp(pad.x + clamp(mouseX - pad.x, -16, 16), pad.w / 2, W - pad.w / 2);
+  } else {
+    humanPaddle();
+  }
+  if (ball.stuck) { ball.x = pad.x; ball.y = pad.y - R - 1; return; }
+
+  if (++idle > 900) { idle = 0; serve(); return; }   // safety: ball trapped for ~15s without touching paddle or bricks -> re-serve
+  const rr = ball.power ? R + 3 : R;   // 파워공은 불꽃까지 커 보이므로 벽 충돌도 보이는 크기로
+  ball.x += ball.vx;
+  if (ball.x < rr) { ball.x = rr; ball.vx *= -1; Snd.tone(180, 0.05, 'square', 0.06); }
+  if (ball.x > W - rr) { ball.x = W - rr; ball.vx *= -1; Snd.tone(180, 0.05, 'square', 0.06); }
+  hitBrick('x');
+  ball.y += ball.vy;
+  if (ball.y < rr) { ball.y = rr; ball.vy *= -1; Snd.tone(180, 0.05, 'square', 0.06); }
+  hitBrick('y');
+
+  if (ball.vy > 0 && ball.y + R >= pad.y && ball.y + R <= pad.y + 10 + ball.vy && Math.abs(ball.x - pad.x) <= pad.w / 2 + R) {
+    const hit = clamp((ball.x - pad.x) / (pad.w / 2), -1, 1), a = hit * 1.0 + rnd(-0.08, 0.08), sp = speedNow();
+    ball.vx = Math.sin(a) * sp; ball.vy = -Math.cos(a) * sp; ball.y = pad.y - R;
+    off = rnd(-0.75, 0.75) * pad.w / 2;
+    ball.fast = false; idle = 0;   // 패들에 닿으면 속도도 원래대로
+    if (ball.power) { ball.power = false; Snd.tone(200, 0.15, 'sawtooth', 0.08, 80); }   // 패들에 닿으면 파워 해제
+    Snd.tone(420, 0.08, 'triangle', 0.12, 260);
+  }
+  if (ball.y > H + 20) {
+    if (manual) { lives--; Snd.tone(220, 0.35, 'sawtooth', 0.1, 60); if (lives < 0) gameOver(); }
+    serve();
+  }
+  if (!bricks.length && level >= BO_MAX_LEVEL) {
+    won = 240; banner = 240; bannerText = 'YOU WIN!  LEVEL ' + BO_MAX_LEVEL + ' CLEARED';
+    [523, 659, 784, 1046, 1318].forEach((f, i) => setTimeout(() => Snd.tone(f, 0.25, 'triangle', 0.12), i * 150));
+  } else if (!bricks.length) {
+    level++; makeBricks();
+    banner = 100; bannerText = 'LEVEL ' + level;
+    [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => Snd.tone(f, 0.15, 'triangle', 0.1), i * 110));
+  }
+}
+function draw() {
+  ctx.fillStyle = '#14122b'; ctx.fillRect(0, 0, W, H);
+  const pulse = 0.5 + 0.5 * Math.sin(t / 6);
+  for (const b of bricks) {
+    if (b.power) {
+      ctx.fillStyle = pulse > 0.5 ? '#ffe14d' : '#ff9f1c'; ctx.fillRect(b.x, b.y, BW - 2, BH);
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.strokeRect(b.x + 1, b.y + 1, BW - 4, BH - 2);
+      ctx.fillStyle = '#5a2d00'; ctx.font = 'bold 10px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('POWER', b.x + (BW - 2) / 2, b.y + BH / 2 + 1);
+    } else if (b.speed) {
+      ctx.fillStyle = pulse > 0.5 ? '#3df5ff' : '#1a8cff'; ctx.fillRect(b.x, b.y, BW - 2, BH);
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.strokeRect(b.x + 1, b.y + 1, BW - 4, BH - 2);
+      ctx.fillStyle = '#00263d'; ctx.font = 'bold 10px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('SPEED', b.x + (BW - 2) / 2, b.y + BH / 2 + 1);
+    } else if (b.num) {   // ordered brick: only the lowest number can be broken
+      const turn = b.num === lowestNum();
+      ctx.fillStyle = turn ? (pulse > 0.5 ? '#ffffff' : '#e6e6ff') : '#3a3a52'; ctx.fillRect(b.x, b.y, BW - 2, BH);
+      ctx.strokeStyle = turn ? '#ffd166' : '#6b6f92'; ctx.lineWidth = turn ? 2 : 1.5; ctx.strokeRect(b.x + 1, b.y + 1, BW - 4, BH - 2);
+      ctx.fillStyle = turn ? '#14122b' : '#aeb3d6'; ctx.font = 'bold 12px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(b.num, b.x + (BW - 2) / 2, b.y + BH / 2 + 1);
+    } else {
+      ctx.fillStyle = ROWCOL[b.r]; ctx.fillRect(b.x, b.y, BW - 2, BH); ctx.fillStyle = '#fff3'; ctx.fillRect(b.x, b.y, BW - 2, 4);
+    }
+  }
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = ball.power ? '#ffd9a0' : '#e0e0ff'; ctx.beginPath(); ctx.roundRect(pad.x - pad.w / 2, pad.y, pad.w, 10, 5); ctx.fill();
+  if (ball.power) {   // 파워공: 불꽃 꼬리
+    for (let i = 4; i >= 1; i--) { ctx.fillStyle = `rgba(255,${120 + i * 25},40,${0.12 * (5 - i)})`; ctx.beginPath(); ctx.arc(ball.x - ball.vx * i * 1.6, ball.y - ball.vy * i * 1.6, R + 3 - i * 0.4, 0, 7); ctx.fill(); }
+    ctx.fillStyle = '#ff6a00'; ctx.beginPath(); ctx.arc(ball.x, ball.y, R + 3, 0, 7); ctx.fill();
+  }
+  if (ball.fast) {   // 스피드공: 파란 잔상
+    for (let i = 5; i >= 1; i--) { ctx.fillStyle = `rgba(61,245,255,${0.1 * (6 - i)})`; ctx.beginPath(); ctx.arc(ball.x - ball.vx * i * 1.1, ball.y - ball.vy * i * 1.1, R - i * 0.3, 0, 7); ctx.fill(); }
+  }
+  ctx.fillStyle = ball.power ? '#fff3b0' : ball.fast ? '#c8fcff' : '#fff'; ctx.beginPath(); ctx.arc(ball.x, ball.y, R, 0, 7); ctx.fill();
+  ctx.fillStyle = '#fffa'; ctx.font = '14px system-ui'; ctx.textAlign = 'left';
+  const hud = 'LEVEL ' + level + '   SCORE ' + score + '   ';
+  ctx.fillText(hud, 10, 22);
+  if (manual) { ctx.fillStyle = '#ff2d3f'; ctx.fillText('♥'.repeat(Math.max(lives, 0)), 10 + ctx.measureText(hud).width, 22); }
+  if (ball.power || ball.fast) { ctx.fillStyle = '#ffb347'; ctx.textAlign = 'right'; ctx.fillText((ball.power ? '🔥 POWER ' : '') + (ball.fast ? '⚡ SPEED x1.3' : ''), W - 10, 22); }
+  if (paused) {
+    ctx.fillStyle = '#000a'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = 'bold 44px system-ui'; ctx.fillText('Pause', W / 2, H / 2 - 22);
+    ctx.font = 'bold 26px system-ui'; ctx.fillText(paused, W / 2, H / 2 + 24);
+    ctx.textBaseline = 'alphabetic';
+    return;
+  }
+  if (banner > 0) { banner--; ctx.globalAlpha = Math.min(1, banner / 30); ctx.fillStyle = '#fff'; ctx.font = 'bold 30px system-ui'; ctx.textAlign = 'center'; ctx.fillText(bannerText, W / 2, H / 2); ctx.globalAlpha = 1; }
+}
+
+// 입력: 마우스/터치로 패들 이동, 클릭/스페이스로 발사, 좌우 방향키
+function toX(e) { const r = cv.getBoundingClientRect(); return (e.clientX - r.left) / r.width * W; }
+cv.addEventListener('pointerdown', () => { if (manual && ball.stuck) launch(); });
+addEventListener('keydown', e => {
+  if (e.key === ' ' || e.key.startsWith('Arrow')) e.preventDefault();
+  const k = e.key.toLowerCase();
+  if (k === 'p' || k === 'o') {   // P = Bathroom Break, O = Meal Break (press again to resume)
+    const msg = k === 'p' ? 'Bathroom Break' : 'Meal Break';
+    paused = paused === msg ? null : msg;
+    return;
+  }
+  keys[e.key] = true; if (e.key === ' ' && manual && ball.stuck && !paused) launch();
+});
+addEventListener('keyup', e => { keys[e.key] = false; });
+
+// 수동/자동 전환 버튼
+const modeBtn = document.createElement('button');
+modeBtn.onclick = () => {
+  manual = !manual; mouseX = null; lives = 3; refreshMode();
+  if (!manual && ball.stuck) launch();
+};
+function refreshMode() {
+  modeBtn.textContent = manual ? '🖐 Manual (click for Auto)' : '🤖 Auto (click for Manual)';
+  document.getElementById('note').textContent = '';
+  cv.style.cursor = 'default';
+}
+document.getElementById('snd').before(modeBtn);
+
+level = startLevel; makeBricks(); serve(); refreshMode();
+loop(step, draw, () => 60 * bar.mult());
+</script></body></html>

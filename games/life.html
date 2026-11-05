@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>생명 게임</title><link rel="stylesheet" href="../common.css"></head>
+<body>
+<canvas id="c"></canvas>
+<div class="note">규칙은 단 3줄. 세포가 스스로 태어나고 죽으며 무늬를 만듭니다. 멈추면 새 생명이 투입돼요.</div>
+<script src="../common.js"></script>
+<script>
+const bar = mountBar('생명 게임');
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const GW = 80, GH = 60, S = 8; cv.width = GW * S; cv.height = GH * S;
+let a = new Uint8Array(GW * GH), age = new Uint8Array(GW * GH), gen = 0, hist = [], injected = 0;
+const GLIDER = [[1,0],[2,1],[0,2],[1,2],[2,2]];
+
+function seed(x0, y0, w, h, dens) { for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) if (Math.random() < dens) a[((y + GH) % GH) * GW + (x + GW) % GW] = 1; }
+function glider(x, y) { const fx = Math.random() < .5 ? 1 : -1, fy = Math.random() < .5 ? 1 : -1; GLIDER.forEach(([dx, dy]) => a[((y + dy * fy + GH) % GH) * GW + (x + dx * fx + GW) % GW] = 1); }
+function inject() { injected++; seed(Math.floor(rnd(0, GW - 20)), Math.floor(rnd(0, GH - 20)), 20, 20, 0.4); for (let i = 0; i < 3; i++) glider(Math.floor(rnd(0, GW)), Math.floor(rnd(0, GH))); Snd.tone(300, 0.2, 'sine', 0.08, 600); }
+seed(0, 0, GW, GH, 0.25);
+
+function step() {
+  const b = new Uint8Array(GW * GH); let pop = 0;
+  for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+    let n = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (dx || dy) n += a[((y + dy + GH) % GH) * GW + (x + dx + GW) % GW];
+    const i = y * GW + x, alive = a[i] ? (n === 2 || n === 3) : n === 3;
+    b[i] = alive ? 1 : 0; age[i] = alive ? Math.min(age[i] + 1, 60) : 0; pop += b[i];
+  }
+  a = b; gen++;
+  hist.push(pop); if (hist.length > 40) hist.shift();
+  if (pop === 0) { seed(0, 0, GW, GH, 0.25); hist = []; }
+  else if (hist.length === 40 && new Set(hist).size <= 4) { inject(); hist = []; }   // 정체되면 새 생명 투입
+  if (gen % 4 === 0) Snd.tone(110 + (pop % 12) * 25, 0.05, 'sine', 0.04);
+}
+function draw() {
+  ctx.fillStyle = '#050a14'; ctx.fillRect(0, 0, cv.width, cv.height);
+  for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+    const i = y * GW + x; if (!a[i]) continue;
+    ctx.fillStyle = 'hsl(' + (170 + age[i] * 2.5) + ',85%,' + (45 + Math.min(age[i], 20)) + '%)';
+    ctx.fillRect(x * S, y * S, S - 1, S - 1);
+  }
+  ctx.fillStyle = '#fff9'; ctx.font = '12px system-ui'; ctx.textAlign = 'left'; ctx.fillText('세대 ' + gen + ' · 개체 ' + hist[hist.length - 1], 8, 16);
+}
+loop(step, draw, () => 14 * bar.mult());
+</script></body></html>

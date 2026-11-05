@@ -1,0 +1,10 @@
+:root{--bg:#10231a;--panel:#1a3a29;--accent:#7bd957;--text:#eaf6ea}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,"Malgun Gothic",sans-serif;display:flex;flex-direction:column;align-items:center;min-height:100vh}
+#bar{width:100%;display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--panel);font-size:15px;flex-wrap:wrap}
+#bar a{color:var(--accent);text-decoration:none;font-weight:600}
+#bar .sp{flex:1}
+#bar button{background:#0e1f16;color:var(--text);border:1px solid #3d6b4e;border-radius:6px;padding:6px 10px;cursor:pointer}
+#bar input{vertical-align:middle}
+canvas{margin-top:16px;max-width:96vw;max-height:calc(100vh - 90px);border-radius:6px;box-shadow:0 8px 30px #0008;background:#000}
+.note{margin:10px;font-size:13px;opacity:.7}

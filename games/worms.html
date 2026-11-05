@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>지렁이 대결</title><link rel="stylesheet" href="../common.css"></head>
+<body>
+<canvas id="c"></canvas>
+<div class="note">4마리 지렁이가 사과를 두고 경쟁합니다. 가끔 서로 막히면 쓰러지고 다시 태어나요.</div>
+<script src="../common.js"></script>
+<script>
+const bar = mountBar('지렁이 대결');
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const W = 30, H = 20, S = 24, STRIP = 34; cv.width = W * S; cv.height = H * S + STRIP;
+const DIRS = [[1,0],[-1,0],[0,1],[0,-1]];
+const snakes = [['#4674e9', '파랑'], ['#ef476f', '빨강'], ['#ffd166', '노랑'], ['#a06cd5', '보라']]
+  .map(([color, name]) => ({ color, name, body: [], score: 0, alive: false, wait: 5 * Math.random() }));
+let apples = [];
+const idx = (x, y) => y * W + x;
+
+function occGrid() { const o = new Uint8Array(W * H); snakes.forEach(s => s.alive && s.body.forEach(p => o[idx(p[0], p[1])] = 1)); return o; }
+function freeCell(o) { for (let i = 0; i < 400; i++) { const x = Math.floor(rnd(0, W)), y = Math.floor(rnd(0, H)); if (!o[idx(x, y)] && !apples.some(a => a[0] === x && a[1] === y)) return [x, y]; } return null; }
+function ensureApples() { while (apples.length < 3) { const c = freeCell(occGrid()); if (!c) break; apples.push(c); } }
+function flood(sx, sy, o, cap) {
+  const seen = new Uint8Array(W * H), q = [[sx, sy]]; seen[idx(sx, sy)] = 1; let n = 0;
+  while (q.length && n < cap) { const [x, y] = q.shift(); n++; for (const [dx, dy] of DIRS) { const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= W || ny >= H || o[idx(nx, ny)] || seen[idx(nx, ny)]) continue; seen[idx(nx, ny)] = 1; q.push([nx, ny]); } }
+  return n;
+}
+function firstStepToApple(hx, hy, o) {   // BFS: 가장 가까운 사과로 가는 첫 걸음
+  const seen = new Uint8Array(W * H), q = []; seen[idx(hx, hy)] = 1;
+  for (const [dx, dy] of DIRS) { const nx = hx + dx, ny = hy + dy; if (nx < 0 || ny < 0 || nx >= W || ny >= H || o[idx(nx, ny)]) continue; seen[idx(nx, ny)] = 1; q.push([nx, ny, dx, dy]); }
+  while (q.length) {
+    const [x, y, fx, fy] = q.shift();
+    if (apples.some(a => a[0] === x && a[1] === y)) return [fx, fy];
+    for (const [dx, dy] of DIRS) { const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= W || ny >= H || o[idx(nx, ny)] || seen[idx(nx, ny)]) continue; seen[idx(nx, ny)] = 1; q.push([nx, ny, fx, fy]); }
+  }
+  return null;
+}
+function step() {
+  ensureApples();
+  const o = occGrid();
+  snakes.forEach((s, si) => {
+    if (!s.alive) {
+      if (--s.wait <= 0) { const c = freeCell(o); if (c) { s.body = [c]; s.alive = true; o[idx(c[0], c[1])] = 1; Snd.tone(500, 0.1, 'sine', 0.06, 800); } }
+      return;
+    }
+    const [hx, hy] = s.body[0], tail = s.body[s.body.length - 1];
+    o[idx(tail[0], tail[1])] = 0;   // 꼬리는 비켜줄 칸으로 취급
+    const opts = DIRS.filter(([dx, dy]) => { const nx = hx + dx, ny = hy + dy; return nx >= 0 && ny >= 0 && nx < W && ny < H && !o[idx(nx, ny)]; });
+    o[idx(tail[0], tail[1])] = 1;
+    if (!opts.length) { s.alive = false; s.wait = 25; s.body.forEach(p => o[idx(p[0], p[1])] = 0); s.body = []; Snd.tone(220, 0.3, 'sawtooth', 0.07, 60); return; }
+    const need = Math.min(s.body.length + 2, 24);
+    const area = ([dx, dy]) => { o[idx(hx + dx, hy + dy)] = 1; const n = flood(hx + dx, hy + dy, o, need); o[idx(hx + dx, hy + dy)] = 0; return n; };
+    let mv = null;
+    if (Math.random() < 0.07) { const safe = opts.filter(d => area(d) >= need); if (safe.length) mv = safe[Math.floor(Math.random() * safe.length)]; }   // 변덕
+    if (!mv) { const g = firstStepToApple(hx, hy, o); if (g && opts.some(d => d[0] === g[0] && d[1] === g[1]) && area(g) >= need) mv = g; }
+    if (!mv) mv = opts.map(d => [d, area(d)]).sort((p, q) => q[1] - p[1])[0][0];
+    const nh = [hx + mv[0], hy + mv[1]];
+    s.body.unshift(nh); o[idx(nh[0], nh[1])] = 1;
+    const ai = apples.findIndex(a => a[0] === nh[0] && a[1] === nh[1]);
+    if (ai >= 0) { apples.splice(ai, 1); s.score++; Snd.tone(500 + si * 120, 0.08, 'triangle', 0.08, 900 + si * 120); }
+    else { const t = s.body.pop(); o[idx(t[0], t[1])] = 0; }
+  });
+}
+function draw() {
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { ctx.fillStyle = (x + y) % 2 ? '#a7d948' : '#aad751'; ctx.fillRect(x * S, y * S, S, S); }
+  ctx.font = S * 0.75 + 'px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  apples.forEach(a => ctx.fillText('🍎', a[0] * S + S / 2, a[1] * S + S / 2 + 2));
+  ctx.lineCap = ctx.lineJoin = 'round';
+  snakes.forEach(s => {
+    if (!s.alive || !s.body.length) return;
+    ctx.strokeStyle = s.color; ctx.lineWidth = S * 0.66; ctx.beginPath();
+    s.body.forEach((p, i) => { const px = p[0] * S + S / 2, py = p[1] * S + S / 2; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+    if (s.body.length === 1) ctx.lineTo(s.body[0][0] * S + S / 2 + .1, s.body[0][1] * S + S / 2);
+    ctx.stroke();
+    const h = s.body[0]; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(h[0] * S + S / 2 - 4, h[1] * S + S / 2 - 3, 3, 0, 7); ctx.arc(h[0] * S + S / 2 + 4, h[1] * S + S / 2 - 3, 3, 0, 7); ctx.fill();
+  });
+  ctx.fillStyle = '#10231a'; ctx.fillRect(0, H * S, cv.width, STRIP);
+  ctx.font = 'bold 15px system-ui'; ctx.textBaseline = 'middle';
+  snakes.forEach((s, i) => { ctx.fillStyle = s.color; ctx.textAlign = 'left'; ctx.fillText('● ' + s.name + '  ' + s.score, 20 + i * 170, H * S + STRIP / 2); });
+}
+loop(step, draw, () => 9 * bar.mult());
+</script></body></html>

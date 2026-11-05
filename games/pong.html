@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>자동 퐁</title><link rel="stylesheet" href="../common.css"></head>
+<body>
+<canvas id="c"></canvas>
+<div class="note">두 AI가 끝없이 랠리합니다. 랠리가 길어질수록 공이 빨라져요.</div>
+<script src="../common.js"></script>
+<script>
+const bar = mountBar('자동 퐁');
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const W = 480, H = 300; cv.width = W; cv.height = H;
+const PH = 60, PW = 8, R = 6;
+const L = { x: 20, y: H / 2, err: 0, score: 0 }, Rt = { x: W - 20, y: H / 2, err: 0, score: 0 };
+let ball, speed, rally = 0, bestRally = 0;
+
+function serve(dirX) {
+  speed = 3.6; rally = 0; const a = rnd(-0.5, 0.5);
+  ball = { x: W / 2, y: H / 2, vx: Math.cos(a) * speed * dirX, vy: Math.sin(a) * speed };
+}
+function aiMove(p, toward) {
+  const tgt = toward ? ball.y + p.err : H / 2 + Math.sin(performance.now() / 700) * 30;
+  p.y = clamp(p.y + clamp(tgt - p.y, -4.6, 4.6), PH / 2, H - PH / 2);
+}
+function paddleHit(p, dir) {
+  if (Math.abs(ball.y - p.y) <= PH / 2 + R) {
+    const off = clamp((ball.y - p.y) / (PH / 2), -1, 1), a = off * 0.9;
+    speed = Math.min(speed + 0.3, 9); rally++; bestRally = Math.max(bestRally, rally);
+    ball.vx = Math.cos(a) * speed * dir; ball.vy = Math.sin(a) * speed;
+    p.err = rnd(-0.5, 0.5) * PH;   // 다음엔 패들의 다른 곳으로 치려고 함 (사람 같은 흔들림)
+    Snd.tone(300 + Math.min(rally, 20) * 20, 0.07, 'square', 0.09);
+    return true;
+  }
+  return false;
+}
+function step() {
+  aiMove(L, ball.vx < 0); aiMove(Rt, ball.vx > 0);
+  ball.x += ball.vx; ball.y += ball.vy;
+  if (ball.y < R || ball.y > H - R) { ball.vy *= -1; ball.y = clamp(ball.y, R, H - R); Snd.tone(160, 0.04, 'square', 0.05); }
+  if (ball.vx < 0 && ball.x - R <= L.x + PW / 2 && ball.x > L.x - 10) paddleHit(L, 1);
+  if (ball.vx > 0 && ball.x + R >= Rt.x - PW / 2 && ball.x < Rt.x + 10) paddleHit(Rt, -1);
+  if (ball.x < -20) { Rt.score++; Snd.tone(200, 0.3, 'sawtooth', 0.08, 80); serve(1); }
+  if (ball.x > W + 20) { L.score++; Snd.tone(200, 0.3, 'sawtooth', 0.08, 80); serve(-1); }
+}
+function draw() {
+  ctx.fillStyle = '#0b1020'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#ffffff30'; for (let y = 0; y < H; y += 20) ctx.fillRect(W / 2 - 2, y, 4, 10);
+  ctx.fillStyle = '#fff'; ctx.fillRect(L.x - PW / 2, L.y - PH / 2, PW, PH); ctx.fillRect(Rt.x - PW / 2, Rt.y - PH / 2, PW, PH);
+  ctx.beginPath(); ctx.arc(ball.x, ball.y, R, 0, 7); ctx.fill();
+  ctx.font = 'bold 36px system-ui'; ctx.textAlign = 'center'; ctx.fillStyle = '#ffffffcc';
+  ctx.fillText(L.score, W / 2 - 60, 46); ctx.fillText(Rt.score, W / 2 + 60, 46);
+  ctx.font = '12px system-ui'; ctx.fillStyle = '#fff9'; ctx.fillText('랠리 ' + rally + ' · 최고 ' + bestRally, W / 2, H - 8);
+}
+serve(1);
+loop(step, draw, () => 60 * bar.mult());
+</script></body></html>
