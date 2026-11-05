@@ -133,10 +133,10 @@ function humanPaddle() {
   pad.x = clamp(nx, pad.w / 2, W - pad.w / 2);
   if (pad.x !== nx) ai.pv = 0;
 }
-function resetStageCounters() {   // each stage rolls its own intervals; CLEAR always comes sooner than DEAD
+function resetStageCounters() {   // each stage rolls its own intervals; CLEAR always comes later (slower) than DEAD
   touches = 0;
   deadEvery = Math.floor(rnd(10, 15));
-  clearEvery = Math.max(5, deadEvery - Math.floor(rnd(3, 6)));
+  clearEvery = deadEvery + Math.floor(rnd(3, 6));
 }
 function onPaddleTouch() {
   touches++;
@@ -145,7 +145,7 @@ function onPaddleTouch() {
   if (touches % clearEvery === 0) spawnClear();
   if (touches % deadEvery === 0) spawnDead();
 }
-// Spawned every N paddle touches (N is smaller than for DEAD): a plain brick turns into a CLEAR brick (one at a time, only while 4+ bricks are left).
+// Spawned every N paddle touches (N is larger than for DEAD): a plain brick turns into a CLEAR brick (one at a time, only while 4+ bricks are left).
 function spawnClear() {
   const live = bricks.filter(b => !b.dead);
   if (live.length < 4 || bricks.some(b => b.clear)) return;
